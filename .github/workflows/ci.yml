@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  # ── 1. Lint ────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-lint-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-lint-
+
+      - name: Install linters
+        run: pip install flake8 black
+
+      - name: flake8
+        run: flake8 app/ tests/
+
+      - name: black
+        run: black --check app/ tests/
+
+  # ── 2. Test ────────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    needs: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-test-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-test-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-cov
+
+      - name: Run tests with coverage
+        run: pytest tests/ --cov=app --cov-report=xml --cov-fail-under=80
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+      - name: Post coverage summary
+        run: |
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "Coverage report uploaded as artifact." >> $GITHUB_STEP_SUMMARY
+
+  # ── 3. Security ────────────────────────────────────────────────────────────
+  security:
+    name: Security
+    needs: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-security-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-security-
+
+      - name: Install security tools
+        run: pip install bandit safety
+
+      - name: bandit
+        run: bandit -r app/ -ll
+
+      - name: safety
+        run: safety check -r requirements.txt
+
+      - name: Post security summary
+        run: |
+          echo "## Security Scan" >> $GITHUB_STEP_SUMMARY
+          echo "bandit and safety scans completed." >> $GITHUB_STEP_SUMMARY
+
+  # ── 4. AI Skills ───────────────────────────────────────────────────────────
+  ai-skills:
+    name: AI Skills
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-ai-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-ai-
+
+      - name: Install anthropic
+        run: pip install anthropic
+
+      - name: Run security-audit skill
+        run: |
+          python plugins/run_skill.py security-audit \
+            --scope app/vitals.py \
+            --context CLAUDE.md \
+            --no-save > /tmp/ai_audit.txt
+          echo "## AI Security Audit" >> $GITHUB_STEP_SUMMARY
+          cat /tmp/ai_audit.txt >> $GITHUB_STEP_SUMMARY
+
+      - name: Block merge on CRITICAL findings
+        run: |
+          if grep -q "CRITICAL" /tmp/ai_audit.txt; then
+            echo "BLOCKED: CRITICAL security finding(s) detected by AI security audit."
+            grep "CRITICAL" /tmp/ai_audit.txt
+            exit 1
+          else
+            echo "AI security audit passed — no CRITICAL findings."
+          fi
