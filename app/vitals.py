@@ -2,6 +2,8 @@
 app/vitals.py
 Core service for recording, retrieving and analysing patient vital signs.
 
+# Week 6: CI/CD pipeline and Docker deployment added
+
 Intentional issues for teaching:
  - No input validation on vital ranges
  - SQL built with f-strings (injection risk)
